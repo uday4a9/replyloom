@@ -34,8 +34,9 @@
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["WhatsAppSession"] },
-    // Stateless DO (reads due-work out of D1, never stores DO-local state).
-    { "tag": "v2", "new_classes": ["Scheduler"] }
+    // Stateless DO (reads due-work out of D1, never stores DO-local state),
+    // but new namespaces must use Cloudflare's SQLite storage backend.
+    { "tag": "v2", "new_sqlite_classes": ["Scheduler"] }
   ],
   // Shared with apps/web — both Workers must point at the SAME database_id.
   // Create it once with `wrangler d1 create whatsapp-ai` after `wrangler login`,

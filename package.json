@@ -13,6 +13,10 @@
     "config:restore": "node scripts/config.mjs --restore",
     "setup": "bash scripts/setup.sh",
     "deploy": "bash scripts/deploy.sh",
+    "cf:build:worker": "node scripts/config.mjs --from-env && pnpm --filter worker run build",
+    "cf:deploy:worker": "(cd apps/worker && CI=true pnpm exec wrangler d1 migrations apply whatsapp-ai --remote && pnpm exec wrangler deploy)",
+    "cf:build:web": "node scripts/config.mjs --from-env && pnpm --filter web run build",
+    "cf:deploy:web": "(cd apps/web && pnpm exec wrangler deploy)",
     "seed:demo": "node scripts/seed-demo.mjs"
   },
   "devDependencies": {
