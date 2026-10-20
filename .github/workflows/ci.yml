@@ -1,7 +1,7 @@
 name: CI
 
-# Least privilege by default: jobs that need more (none do today) can
-# elevate per-job. The deploy job only pushes to Cloudflare via secrets.
+# Least privilege by default. Production deploys are handled by Cloudflare
+# Workers Builds; GitHub Actions remains the independent validation gate.
 permissions:
   contents: read
 
@@ -78,80 +78,3 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: bash scripts/check-patches.sh
-
-  deploy:
-    name: Deploy
-    runs-on: ubuntu-latest
-    needs: [build, check-patches]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    environment: production
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      # Skip (don't fail) when the Cloudflare credentials aren't configured,
-      # e.g. on a fork or a repo that hasn't set the production secrets yet.
-      # Deploy config is not in the repo (scripts/config.mjs). It's rendered from
-      # the templates using these repo secrets/variables (Settings → Secrets and
-      # variables → Actions):
-      #   secrets: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, D1_DATABASE_ID, KV_NAMESPACE_ID
-      #   variables: APP_URL (CRM origin), ENGINE_URL (engine worker URL), SENTRY_DSN (optional)
-      - name: Check deploy credentials
-        id: creds
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
-          KV_NAMESPACE_ID: ${{ secrets.KV_NAMESPACE_ID }}
-          APP_URL: ${{ vars.APP_URL }}
-          ENGINE_URL: ${{ vars.ENGINE_URL }}
-        run: |
-          for k in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID D1_DATABASE_ID KV_NAMESPACE_ID APP_URL ENGINE_URL; do
-            if [ -z "${!k}" ]; then
-              echo "skip=true" >> "$GITHUB_OUTPUT"
-              echo "$k not set — skipping deploy." >&2
-              exit 0
-            fi
-          done
-          echo "skip=false" >> "$GITHUB_OUTPUT"
-      - name: Render deploy config
-        if: steps.creds.outputs.skip == 'false'
-        run: node scripts/config.mjs --from-env
-        env:
-          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
-          KV_NAMESPACE_ID: ${{ secrets.KV_NAMESPACE_ID }}
-          APP_URL: ${{ vars.APP_URL }}
-          ENGINE_URL: ${{ vars.ENGINE_URL }}
-          SENTRY_DSN: ${{ vars.SENTRY_DSN }}
-      # The web app must be built (vite) with the rendered .env.production
-      # before `wrangler deploy` picks up its output.
-      - name: Build
-        if: steps.creds.outputs.skip == 'false'
-        run: pnpm build
-      # Inlined from scripts/deploy.sh (which prompts interactively on stale
-      # patches and would hang here — check-patches already gates this job).
-      - name: Apply D1 migrations
-        if: steps.creds.outputs.skip == 'false'
-        working-directory: apps/worker
-        run: CI=true pnpm exec wrangler d1 migrations apply whatsapp-ai --remote
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      - name: Deploy engine (apps/worker)
-        if: steps.creds.outputs.skip == 'false'
-        working-directory: apps/worker
-        run: pnpm exec wrangler deploy
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      - name: Deploy web app (apps/web)
-        if: steps.creds.outputs.skip == 'false'
-        working-directory: apps/web
-        run: pnpm exec wrangler deploy
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

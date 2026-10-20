@@ -1,12 +1,12 @@
 # Deploying
 
-This app is two Cloudflare Workers (`apps/worker`, the WhatsApp engine; `apps/web`, the CRM) sharing one D1 database. `pnpm setup` + `pnpm deploy` handle the whole thing, but here's what they do, in case you want to run any step by hand, use a CI pipeline instead, or something doesn't go as expected.
+This app is two Cloudflare Workers (`apps/worker`, the WhatsApp engine; `apps/web`, the CRM) sharing one D1 database. Use `pnpm run setup` once, then connect both Worker projects to this repository with Cloudflare Workers Builds. `pnpm run deploy` remains available for a manual deployment.
 
 ## Prerequisites
 
 - A Cloudflare account (the free tier works for trying this out; Durable Objects, Queues, and Vectorize all have free tier allowances but check current limits for production use).
 - Node 22+ and pnpm (`corepack enable` is enough — this repo pins the pnpm version).
-- `pnpm exec wrangler login` — the setup/deploy scripts run as you, against your account.
+- `pnpm --dir apps/worker exec wrangler login` — the setup/deploy scripts run as you, against your account.
 
 ## Config files (not in git)
 
@@ -18,7 +18,7 @@ Per-deployment config is kept out of the repo so nobody's Cloudflare ids or doma
 | `apps/worker/wrangler.example.jsonc` | `apps/worker/wrangler.jsonc` |
 | `apps/web/.env.production.example` | `apps/web/.env.production` |
 
-Edit your files, not the templates. `pnpm deploy` runs `node scripts/config.mjs --check` and stops if any placeholder is left. If your Cloudflare login can see several accounts, `export CLOUDFLARE_ACCOUNT_ID=...` first (there's no `account_id` in the templates).
+Edit your files, not the templates. `pnpm run deploy` runs `node scripts/config.mjs --check` and stops if any placeholder is left. If your Cloudflare login can see several accounts, `export CLOUDFLARE_ACCOUNT_ID=...` first (there's no `account_id` in the templates).
 
 **Backup / restore.** So you never have to set this up again on the same machine:
 
@@ -37,15 +37,47 @@ pnpm config:backup --cloud    # local backup + upload to r2://<bucket>/config/co
 pnpm config:restore --cloud   # download from R2, then restore missing local files
 ```
 
-On a new machine: `pnpm exec wrangler login`, then `pnpm config:restore --cloud` — done, no re-entry. The bucket defaults to the media bucket created by `pnpm setup` (override with `CONFIG_R2_BUCKET`). The blob contains your `.dev.vars` secrets, so it lives in your private bucket — never commit it or share the bucket. Alternatively point `CONFIG_BACKUP_DIR` at a synced folder (Dropbox, iCloud) if you prefer local sync; the backup holds real secrets either way, so never move it into the repo.
+On a new machine: `pnpm --dir apps/worker exec wrangler login`, then `pnpm config:restore --cloud` — done, no re-entry. The bucket defaults to the media bucket created by `pnpm run setup` (override with `CONFIG_R2_BUCKET`). The blob contains your `.dev.vars` secrets, so it lives in your private bucket — never commit it or share the bucket. Alternatively point `CONFIG_BACKUP_DIR` at a synced folder (Dropbox, iCloud) if you prefer local sync; the backup holds real secrets either way, so never move it into the repo.
 
-**GitHub Actions deploy.** CI renders the three files with `node scripts/config.mjs --from-env`. Add these under Settings → Secrets and variables → Actions:
-- Secrets: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `D1_DATABASE_ID`, `KV_NAMESPACE_ID`
-- Variables: `APP_URL` (CRM origin), `ENGINE_URL` (engine Worker URL), `SENTRY_DSN` (optional)
+## Native Cloudflare Git deployments
 
-The deploy job skips cleanly when any of these is missing, for example on forks. The nightly D1 backup uses the same values.
+Connect the GitHub repository to both existing Workers from **Workers & Pages → Worker → Settings → Builds**. Keep them as separate projects; the web Worker's `WA_WORKER` service binding still targets the engine Worker by name.
 
-## `pnpm setup`
+Use these production build settings for `wa-cf-poc`:
+
+- Root directory: `/`
+- Production branch: `main`
+- Build command: `pnpm run cf:build:worker`
+- Deploy command: `pnpm run cf:deploy:worker`
+- Build watch paths: `*`
+- Non-production branch builds: disabled (Durable Object previews do not receive preview URLs, and previews must not share production state)
+
+Use these production build settings for `whatsapp-ai-web`:
+
+- Root directory: `/`
+- Production branch: `main`
+- Build command: `pnpm run cf:build:web`
+- Deploy command: `pnpm run cf:deploy:web`
+- Build watch paths: `*`
+- Non-production branch builds: disabled (pull requests are validated by GitHub Actions without touching production data)
+
+Add the following **Build variables and secrets** to both Worker build configurations. These values exist only during the build; application runtime secrets stay in the Worker secret stores created by `pnpm run setup`.
+
+| Name | Kind | Value |
+|---|---|---|
+| `D1_DATABASE_ID` | Secret | ID written to both local `wrangler.jsonc` files by setup |
+| `KV_NAMESPACE_ID` | Secret | ID written to the engine's local `wrangler.jsonc` by setup |
+| `APP_URL` | Variable | Public HTTPS origin of `whatsapp-ai-web` |
+| `ENGINE_URL` | Variable | Public HTTPS origin of `wa-cf-poc` |
+| `NODE_VERSION` | Variable | `22` |
+| `PNPM_VERSION` | Variable | Version in the root `packageManager` field |
+| `SENTRY_DSN` | Secret, optional | Browser Sentry DSN |
+
+The build commands render gitignored deployment files from the tracked templates. No account IDs, resource IDs, domains, API tokens, or runtime secrets are committed. The engine deployment applies D1 migrations before uploading the Worker. GitHub Actions continues to run lint, typecheck, tests, builds, and patch verification, but no longer performs production deployment.
+
+The nightly D1 backup workflow is independent of deployment and still needs its documented GitHub Actions secrets and variables if you enable it.
+
+## `pnpm run setup`
 
 Runs `scripts/setup.sh`, which is idempotent (safe to re-run; it reuses anything that already exists):
 
@@ -59,7 +91,7 @@ Runs `scripts/setup.sh`, which is idempotent (safe to re-run; it reuses anything
 
 After it finishes, set your real URLs: `BETTER_AUTH_URL` in `apps/web/wrangler.jsonc` (Better Auth uses it for cookies and redirects), `CORS_ORIGIN` in `apps/worker/wrangler.jsonc`, and `VITE_ENGINE_URL` in `apps/web/wrangler.jsonc` and `apps/web/.env.production`.
 
-## `pnpm deploy`
+## `pnpm run deploy`
 
 Runs `scripts/deploy.sh`:
 

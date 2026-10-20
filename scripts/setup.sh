@@ -19,6 +19,14 @@ QUEUE_NAME="wa-broadcast-dispatch"
 VECTORIZE_INDEX="wa-messages"
 AGENT_VECTORIZE_INDEX="wa-docs"
 KV_BINDING="REPLY_CACHE"
+SECRET_FILE=""
+
+cleanup() {
+  if [ -n "$SECRET_FILE" ] && [ -f "$SECRET_FILE" ]; then
+    rm -f "$SECRET_FILE"
+  fi
+}
+trap cleanup EXIT
 
 # Create wrangler.jsonc / .env.production from the templates if missing.
 node scripts/config.mjs
@@ -54,12 +62,19 @@ if [ "$CURRENT_DB_ID" = "REPLACE_WITH_D1_DATABASE_ID" ] || [ -z "$CURRENT_DB_ID"
     DB_ID="$EXISTING"
     echo "    found existing database, id=$DB_ID"
   else
-    OUTPUT=$(wrangler d1 create "$DB_NAME" --json)
-    DB_ID=$(echo "$OUTPUT" | node -e "
+    wrangler d1 create "$DB_NAME" >/dev/null
+    DB_ID=$(wrangler d1 list --json 2>/dev/null | node -e "
       let s = '';
       process.stdin.on('data', (d) => { s += d; });
-      process.stdin.on('end', () => console.log(JSON.parse(s).uuid));
+      process.stdin.on('end', () => {
+        const db = JSON.parse(s).find((d) => d.name === '$DB_NAME');
+        if (db) console.log(db.uuid);
+      });
     ")
+    if [ -z "$DB_ID" ]; then
+      echo "Could not resolve the id of the newly created D1 database." >&2
+      exit 1
+    fi
     echo "    created database, id=$DB_ID"
   fi
 
@@ -106,13 +121,13 @@ done
 echo "==> KV namespace ($KV_BINDING)..."
 CURRENT_KV_ID=$(grep -A2 '"kv_namespaces"' "$WORKER_CONFIG" | grep -o '"id": *"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
 if [ "$CURRENT_KV_ID" = "REPLACE_WITH_KV_NAMESPACE_ID" ] || [ -z "$CURRENT_KV_ID" ]; then
-  if ! wrangler kv namespace list --json 2>/dev/null | grep -q "\"title\": *\"$KV_BINDING\""; then
+  if ! wrangler kv namespace list 2>/dev/null | grep -q "\"title\": *\"$KV_BINDING\""; then
     wrangler kv namespace create "$KV_BINDING" >/dev/null
     echo "    created namespace"
   else
     echo "    found existing namespace"
   fi
-  KV_ID=$(wrangler kv namespace list --json 2>/dev/null | node -e "
+  KV_ID=$(wrangler kv namespace list 2>/dev/null | node -e "
     let s = '';
     process.stdin.on('data', (d) => { s += d; });
     process.stdin.on('end', () => {
@@ -143,12 +158,30 @@ echo "==> Applying D1 migrations..."
 CI=true wrangler d1 migrations apply "$DB_NAME" --remote
 
 # ── Auth secret ───────────────────────────────────────────────────────────
+secret_exists() {
+  local app_dir="$1"
+  local name="$2"
+  (cd "$app_dir" && pnpm exec wrangler secret list 2>/dev/null | grep -q "\"name\": \"$name\"")
+}
+
+put_generated_secret() {
+  local name="$1"
+  shift
+  SECRET_FILE=$(mktemp)
+  chmod 600 "$SECRET_FILE"
+  node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))" >"$SECRET_FILE"
+  for app_dir in "$@"; do
+    (cd "$app_dir" && pnpm exec wrangler secret put "$name" <"$SECRET_FILE")
+  done
+  rm -f "$SECRET_FILE"
+  SECRET_FILE=""
+}
+
 echo "==> Better Auth secret..."
-if (cd "$WEB_DIR" && pnpm exec wrangler secret list 2>/dev/null | grep -q "BETTER_AUTH_SECRET"); then
+if secret_exists "$WEB_DIR" "BETTER_AUTH_SECRET"; then
   echo "    already set"
 else
-  GENERATED=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
-  (cd "$WEB_DIR" && echo "$GENERATED" | pnpm exec wrangler secret put BETTER_AUTH_SECRET)
+  put_generated_secret "BETTER_AUTH_SECRET" "$WEB_DIR"
   echo "    generated and set a new secret"
 fi
 
@@ -158,23 +191,19 @@ fi
 # it, apps/worker/src/session/whatsapp-session.ts verifies it). Must be the
 # SAME value in both apps — generate it once here and set it in both.
 echo "==> WebSocket token secret (WS_TOKEN_SECRET)..."
-if (cd "$WEB_DIR" && pnpm exec wrangler secret list 2>/dev/null | grep -q "WS_TOKEN_SECRET"); then
+if secret_exists "$WEB_DIR" "WS_TOKEN_SECRET" && secret_exists "$WORKER_DIR" "WS_TOKEN_SECRET"; then
   echo "    already set"
 else
-  GENERATED=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
-  (cd "$WEB_DIR" && echo "$GENERATED" | pnpm exec wrangler secret put WS_TOKEN_SECRET)
-  (cd "$WORKER_DIR" && echo "$GENERATED" | pnpm exec wrangler secret put WS_TOKEN_SECRET)
+  put_generated_secret "WS_TOKEN_SECRET" "$WEB_DIR" "$WORKER_DIR"
   echo "    generated and set a new secret in both apps"
 fi
 
 # ── Engine internal secret (web -> engine auth) ──────────────────────────
 echo "==> Engine internal secret (ENGINE_INTERNAL_SECRET)..."
-if (cd "$WEB_DIR" && pnpm exec wrangler secret list 2>/dev/null | grep -q "ENGINE_INTERNAL_SECRET"); then
+if secret_exists "$WEB_DIR" "ENGINE_INTERNAL_SECRET" && secret_exists "$WORKER_DIR" "ENGINE_INTERNAL_SECRET"; then
   echo "    already set"
 else
-  GENERATED=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
-  (cd "$WEB_DIR" && echo "$GENERATED" | pnpm exec wrangler secret put ENGINE_INTERNAL_SECRET)
-  (cd "$WORKER_DIR" && echo "$GENERATED" | pnpm exec wrangler secret put ENGINE_INTERNAL_SECRET)
+  put_generated_secret "ENGINE_INTERNAL_SECRET" "$WEB_DIR" "$WORKER_DIR"
   echo "    generated and set a new secret in both apps"
 fi
 
@@ -202,4 +231,4 @@ fi
 
 echo ""
 echo "Setup complete. Next: set your URLs (BETTER_AUTH_URL in $WEB_CONFIG, CORS_ORIGIN in $WORKER_CONFIG,"
-echo "VITE_ENGINE_URL in both $WEB_CONFIG and $WEB_DIR/.env.production), then run 'pnpm deploy'."
+echo "VITE_ENGINE_URL in both $WEB_CONFIG and $WEB_DIR/.env.production), then run 'pnpm run deploy'."

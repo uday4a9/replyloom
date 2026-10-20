@@ -22,7 +22,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       # wrangler resolves the database id from wrangler.jsonc, which isn't in
-      # the repo — render it (see scripts/config.mjs and ci.yml's deploy job).
+      # the repo — render it from the same values used by Workers Builds.
       - name: Render deploy config
         run: node scripts/config.mjs --from-env
         env:

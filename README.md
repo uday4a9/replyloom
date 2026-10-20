@@ -103,16 +103,16 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for how the pieces fit together.
 ```bash
 git clone https://github.com/thareekanvar/replyloom.git && cd replyloom
 pnpm install
-pnpm exec wrangler login
+pnpm --dir apps/worker exec wrangler login
 
-pnpm setup     # creates D1, R2, Queue, Vectorize, KV; applies migrations; generates secrets
+pnpm run setup # creates D1, R2, Queue, Vectorize, KV; applies migrations; generates secrets
 ```
 
 Then, before the first deploy:
 
-1. `pnpm install` created your local, gitignored config from the templates: `apps/web/wrangler.jsonc`, `apps/worker/wrangler.jsonc` and `apps/web/.env.production` (`pnpm setup` has already written your D1/KV ids into them). Set the URLs to **your** domains: `BETTER_AUTH_URL` (web), `CORS_ORIGIN` (worker) and `VITE_ENGINE_URL` (web `wrangler.jsonc` + `.env.production`). Edit these files, never the `*.example` templates.
+1. `pnpm install` created your local, gitignored config from the templates: `apps/web/wrangler.jsonc`, `apps/worker/wrangler.jsonc` and `apps/web/.env.production` (`pnpm run setup` has already written your D1/KV ids into them). Set the URLs to **your** domains: `BETTER_AUTH_URL` (web), `CORS_ORIGIN` (worker) and `VITE_ENGINE_URL` (web `wrangler.jsonc` + `.env.production`). Edit these files, never the `*.example` templates.
 2. Optional: set `RESEND_API_KEY` on `apps/web` so invitation emails are actually sent, and `SENTRY_DSN` (both Workers) / `VITE_SENTRY_DSN` (`.env.production`) for error reporting. Sentry is off unless you set these.
-3. `pnpm deploy`. It refuses to run while template placeholders are still in your config.
+3. Connect both Workers to the repository using the native Cloudflare Git deployment settings in [DEPLOY.md](./DEPLOY.md), or run `pnpm run deploy` manually. Manual deploy refuses to run while template placeholders remain.
 4. Open the app, sign up (you get a personal workspace), go to **Integrations**, add a session and scan the QR code with *WhatsApp → Linked devices*.
 
 Both scripts are idempotent. [DEPLOY.md](./DEPLOY.md) covers every step by hand, plus multiple environments, backups, custom domains and monitoring.
@@ -187,7 +187,7 @@ It can happen with any unofficial client, and nobody can guarantee otherwise. Re
 Yes. A workspace can link several numbers. Each runs in its own isolated Cloudflare Durable Object and stays connected 24/7, even with every browser tab closed.
 
 ### Do I need a server or a database?
-No. Everything runs on Cloudflare: Workers for the app, Durable Objects for the WhatsApp sessions, D1 (SQLite) for data and R2 for media. `pnpm setup` creates all of it.
+No. Everything runs on Cloudflare: Workers for the app, Durable Objects for the WhatsApp sessions, D1 (SQLite) for data and R2 for media. `pnpm run setup` creates all of it.
 
 ### Does it work with WhatsApp groups?
 Yes. Group chats sit in the inbox next to direct chats, and you can create groups and manage members, settings and invite links.

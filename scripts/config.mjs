@@ -21,7 +21,7 @@
 //                                      `wrangler login` once):
 //                                        r2://<CONFIG_R2_BUCKET>/config/config.json
 //                                      bucket defaults to the media bucket
-//                                      created by `pnpm setup`. On a new
+//                                      created by `pnpm run setup`. On a new
 //                                      machine: wrangler login, then
 //                                      `pnpm config:restore --cloud`.
 // `node scripts/config.mjs --from-env` (re)write all three from the templates
@@ -66,7 +66,7 @@ function wrangler(args) {
   });
   if (r.status !== 0) {
     console.error((r.stdout ?? "") + (r.stderr ?? ""));
-    console.error(`\`wrangler ${args.slice(0, 3).join(" ")}\` failed — are you logged in (\`pnpm exec wrangler login\`) and does bucket "${R2_BUCKET}" exist?`);
+    console.error(`\`wrangler ${args.slice(0, 3).join(" ")}\` failed — are you logged in (\`pnpm --dir apps/worker exec wrangler login\`) and does bucket "${R2_BUCKET}" exist?`);
     process.exit(1);
   }
   return r.stdout ?? "";
@@ -151,7 +151,7 @@ if (mode === "--check") {
     return !existsSync(p) || PLACEHOLDER.test(readFileSync(p, "utf8"));
   });
   if (bad.length) {
-    console.error(`Placeholders left in: ${bad.join(", ")}\nRun \`pnpm setup\` and set your URLs (see DEPLOY.md).`);
+    console.error(`Placeholders left in: ${bad.join(", ")}\nRun \`pnpm run setup\` and set your URLs (see DEPLOY.md).`);
     process.exit(1);
   }
   process.exit(0);
@@ -194,6 +194,6 @@ restoreMissing();
 for (const [tpl, dst] of FILES) {
   if (!existsSync(join(root, dst))) {
     copyFileSync(join(root, tpl), join(root, dst));
-    console.log(`created ${dst} from ${tpl} (placeholder values — run \`pnpm setup\`)`);
+    console.log(`created ${dst} from ${tpl} (placeholder values — run \`pnpm run setup\`)`);
   }
 }

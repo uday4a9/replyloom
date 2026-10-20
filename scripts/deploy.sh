@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Deploys both Workers, in the right order: the engine (apps/worker) first
 # since the web app's service binding depends on it existing, then the web
-# app itself. Run `pnpm setup` once before the first deploy.
+# app itself. Run `pnpm run setup` once before the first deploy.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
